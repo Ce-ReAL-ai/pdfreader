@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF 快速检索阅读器</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">📄 检索型 PDF 阅读器</div>
+  <div id="docInfo" class="docinfo">加载中…</div>
+  <div id="statusPill" class="pill">…</div>
+  <div id="topActions">
+    <button id="btnSwitch" title="切换/打开其它 PDF">切换文档</button>
+  </div>
+</header>
+<div id="dbg" hidden></div>
+
+<section id="searchRow">
+  <input id="q" type="search" placeholder="输入关键词检索（支持中文分词 / 多个词空格分隔）"
+         autocomplete="off" spellcheck="false">
+  <button id="btnSearch">检索</button>
+  <div id="resultSummary" class="summary"></div>
+</section>
+<div id="optsRow">
+  <label>匹配模式
+    <select id="optMode" title="整词=按你输入的完整词串精确匹配；分词=把输入切开分别匹配">
+      <option value="auto">智能（整词优先）</option>
+      <option value="phrase">仅整词/短语</option>
+      <option value="terms">仅分词</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="optSingle"> 允许单字词参与匹配</label>
+  <label>上下文
+    <select id="optCtx">
+      <option value="20">20字</option>
+      <option value="40" selected>40字</option>
+      <option value="80">80字</option>
+      <option value="120">120字</option>
+    </select>
+  </label>
+  <label>结果上限
+    <select id="optLimit">
+      <option value="50">50</option>
+      <option value="100" selected>100</option>
+      <option value="200">200</option>
+      <option value="300">300</option>
+    </select>
+  </label>
+  <span class="opts-hint">设置自动保存，下次搜索生效</span>
+</div>
+
+<main id="layout">
+  <aside id="results" class="panel">
+    <div class="panel-title">检索结果 <span id="resCount"></span>
+      <span class="navbtns">
+        <button id="prevHit" title="上一命中">↑</button>
+        <button id="nextHit" title="下一命中">↓</button>
+      </span>
+    </div>
+    <div id="hitList"></div>
+  </aside>
+
+  <section id="viewer" class="panel">
+    <div id="viewerToolbar">
+      <button id="btnPrev" title="上一页 (←)">◀</button>
+      <span class="pageno">第 <input id="pageNo" type="number" min="1" value="1" inputmode="numeric"> / <span id="pageTotal">?</span> 页</span>
+      <button id="btnNext" title="下一页 (→)">▶</button>
+      <select id="tocSel" hidden title="按书签目录跳转"><option value="">目录…</option></select>
+      <span class="sep"></span>
+      <button id="zoomOut" title="缩小">−</button>
+      <span id="zoomPct">100%</span>
+      <button id="zoomIn" title="放大">＋</button>
+      <button id="fitPage" title="适应宽度">适应</button>
+      <button id="btnText" title="查看本页文字">文本</button>
+    </div>
+    <div id="scrollWrap">
+      <div id="pageHost"></div>
+      <pre id="textPanel" hidden></pre>
+    </div>
+  </section>
+</main>
+
+<div id="buildOverlay" hidden>
+  <div class="card">
+    <button id="btnCloseOverlay" class="ov-close" title="关闭弹窗（仍显示页面）">✕</button>
+    <h2 id="buildTitle">正在为文档建立 OCR 文字层缓存…</h2>
+    <div class="bar"><div id="buildBar"></div></div>
+    <div id="buildDetail" class="build-detail">准备中…</div>
+    <div id="buildError" class="build-error" hidden></div>
+    <button id="btnStartBuild" hidden>开始构建缓存</button>
+  </div>
+</div>
+
+<!-- 切换文档弹窗 -->
+<div id="docModal" hidden>
+  <div class="docmodal-card">
+    <button id="btnCloseDoc" class="ov-close" title="关闭">✕</button>
+    <h3>切换文档</h3>
+    <div class="dm-row">
+      <input id="dmPath" type="text" placeholder="输入 PDF 完整路径，如 D:\docs\book.pdf" spellcheck="false">
+      <button id="dmOpen" class="primary">打开</button>
+    </div>
+    <div class="dm-row">
+      <input id="dmFolder" type="text" placeholder="扫描某文件夹里的 PDF，如 D:\docs" spellcheck="false">
+      <button id="dmScan">列出文件夹中的 PDF</button>
+    </div>
+    <div id="dmFolderList" class="dm-list" hidden></div>
+    <div class="dm-sub">文档库（已缓存 / 最近打开，点条目立即切换）</div>
+    <div id="dmLibrary" class="dm-list"></div>
+    <div id="dmErr" class="build-error" hidden></div>
+  </div>
+</div>
+
+<script type="module" src="/web/app.js"></script>
+</body>
+</html>
