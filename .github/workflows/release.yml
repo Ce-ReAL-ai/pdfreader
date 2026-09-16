@@ -1,0 +1,131 @@
+name: release
+
+# 打 tag 或手动触发：构建 Windows 绿色包，并把产物挂到 Release 上。
+# 仓库里只留源码（~250 KB），exe/cache 一律走 Release 资产，
+# 这样既绕开「单文件 100 MB 上限」，也不把二进制塞进 git 历史。
+#
+# 缓存从哪来：本仓库名为 <tag>-cache 的 Release 里带 pdfreader-cache.zip
+# （由 tools/make_release.py --cache-archive 生成）。没有也能构建，只是包内
+# 不含预置缓存，别人第一次打开要自己 OCR。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v1.0.0)"
+        required: true
+      cache_tag:
+        description: "Release tag holding pdfreader-cache.zip (empty = skip cache)"
+        required: false
+        default: "cache-latest"
+
+permissions:
+  contents: write          # 需要写 Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Install pdf.js (frontend renderer)
+        run: npm install --no-audit --no-fund
+
+      - name: Resolve tags
+        id: vars
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ github.event.inputs.tag }}"
+            $cacheTag = "${{ github.event.inputs.cache_tag }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+            $cacheTag = "cache-latest"
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "cache_tag=$cacheTag" >> $env:GITHUB_OUTPUT
+          Write-Host "release tag: $tag / cache tag: $cacheTag"
+
+      - name: Locate prebuilt OCR cache (fail early if it is missing)
+        id: cache
+        shell: pwsh
+        run: |
+          if ("${{ steps.vars.outputs.cache_tag }}" -eq "") {
+            Write-Host "::warning::cache_tag is empty - release will NOT contain prebuilt caches"
+            "src=__none__" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          ./release/fetch_cache.ps1 -Repo "${{ github.repository }}" `
+            -Tag "${{ steps.vars.outputs.cache_tag }}" -OutDir "staging/ocr-cache" -Force
+          if ($LASTEXITCODE -ne 0) {
+            throw "cannot fetch pdfreader-cache.zip from tag '${{ steps.vars.outputs.cache_tag }}'. Publish it first (tools/make_release.py --cache-archive), or dispatch this workflow with an empty cache_tag."
+          }
+          "src=staging/ocr-cache" >> $env:GITHUB_OUTPUT
+
+      - name: Build bundle
+        run: pyinstaller pdfreader.spec --noconfirm
+
+      - name: Assemble release folder
+        shell: pwsh
+        run: |
+          $src = "${{ steps.cache.outputs.src }}"
+          if ($src -eq "__none__") {
+            # 无缓存来源：允许构建，但必须显式说明，避免悄悄发出一个没有预置缓存的包
+            Write-Host "::warning::building WITHOUT prebuilt caches"
+            python tools/make_release.py --archive zip
+          } else {
+            python tools/make_release.py --cache-src $src --archive zip --cache-archive
+            if ($LASTEXITCODE -ne 0) { throw "make_release failed" }
+          }
+
+      - name: Verify the bundle really carries caches
+        if: steps.cache.outputs.src != '__none__'
+        shell: pwsh
+        run: |
+          $dirs = @(Get-ChildItem -Path "dist/PDFReader/cache" -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match '^[0-9a-f]{16}$' })
+          if ($dirs.Count -eq 0) { throw "release would ship with no prebuilt cache" }
+          Write-Host "prebuilt caches in bundle: $($dirs.Count)"
+
+      - name: Smoke test (server / frontend assets / cache hit / Range)
+        shell: pwsh
+        run: |
+          $src = "${{ steps.cache.outputs.src }}"
+          if ($src -eq "__none__") { $src = "cache" }
+          python tools/smoke_release.py --exe "dist/PDFReader/PDF阅读器.exe" `
+            --cache-root $src --port 8799
+          if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: PDFReader ${{ steps.vars.outputs.tag }}
+          generate_release_notes: true
+          # 通配符 + fail_on_unmatched_files=false：无缓存来源时不会因为缺文件而失败
+          fail_on_unmatched_files: false
+          files: |
+            dist/PDFReader-分享包.zip
+            dist/pdfreader-cache.zip*
+          body: |
+            解压 `PDFReader-分享包.zip`，把 PDF 放进 `books\`，双击 `PDF阅读器.exe`。
+            无需安装 Python / npm / 联网。
+
+            - 若包内已预置对应教材的 OCR 缓存，打开即秒出检索结果；
+            - 内容不同的 PDF 会自动重新建立缓存，不会拿旧缓存出错结果；
+            - `pdfreader-cache.zip` 只含预置缓存，供自行构建的人使用
+              （`release/fetch_cache.ps1` 可一键拉取）。

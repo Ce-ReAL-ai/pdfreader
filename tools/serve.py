@@ -19,13 +19,46 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-ROOT = Path(__file__).resolve().parent.parent
-WEB_DIR = ROOT / "web"
+def _bundle_root() -> Path:
+    """只读资源根目录。
+
+    - 源码运行：项目根目录（web/ 与 node_modules/ 所在处）
+    - PyInstaller 打包：sys._MEIPASS（--add-data 打进去的资源解压根）
+    """
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).resolve().parent.parent
+
+
+def _data_root() -> Path:
+    """可写数据根目录（cache/ 落在 exe 旁边，而不是只读的临时解压目录）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(_data_root()))
+
+ROOT = _data_root()
+WEB_DIR = _bundle_root() / "web"
 CACHE_ROOT = ROOT / "cache"
-PDFJS_DIR = ROOT / "node_modules" / "pdfjs-dist"
+PDFJS_DIR = _bundle_root() / "node_modules" / "pdfjs-dist"
 STATE_FILE = CACHE_ROOT / "_last.json"
 LIBRARY_FILE = CACHE_ROOT / "_library.json"
+
+
+def set_cache_root(path) -> Path:
+    """把缓存根改到别处（打包版双击运行时用 exe 同级目录）。
+
+    必须在创建 App 之前调用；同时刷新由它派生的两个状态文件路径。
+    """
+    global CACHE_ROOT, STATE_FILE, LIBRARY_FILE
+    CACHE_ROOT = Path(path).resolve()
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    STATE_FILE = CACHE_ROOT / "_last.json"
+    LIBRARY_FILE = CACHE_ROOT / "_library.json"
+    return CACHE_ROOT
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -500,7 +533,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main():
+def _open_browser(url: str) -> bool:
+    """打开系统默认浏览器；失败只提示，不影响服务器继续跑。"""
+    try:
+        import webbrowser
+        if webbrowser.open(url):
+            return True
+    except Exception as e:  # noqa: BLE001
+        print(f"[提示] 自动打开浏览器失败（{e}），请手动访问上面的地址。")
+        return False
+    print(f"[提示] 未能自动唤起浏览器，请手动访问: {url}")
+    return False
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description="本地 PDF 检索阅读器服务器（多文档）")
     ap.add_argument("--pdf", help="PDF 路径（省略则打开上次文档；网页内可随时切换）")
     ap.add_argument("--port", type=int, default=8765)
@@ -509,7 +555,13 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="使用 CUDA GPU 加速 OCR")
     ap.add_argument("--no-auto-build", action="store_true",
                     help="不自动建缓存，仅提供已有缓存")
-    args = ap.parse_args()
+    ap.add_argument("--cache-root", help="缓存根目录（默认：项目/exe 同级的 cache/）")
+    ap.add_argument("--open", dest="open_browser", action="store_true",
+                    help="启动后自动打开系统浏览器")
+    args = ap.parse_args(argv)
+
+    if args.cache_root:
+        set_cache_root(args.cache_root)
 
     pdf = None
     if args.pdf:
@@ -519,17 +571,34 @@ def main():
 
     Handler.app = App(pdf, dpi=args.dpi, workers=args.workers,
                       auto_build=not args.no_auto_build, gpu=args.gpu)
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    except OSError as e:
+        sys.exit(f"端口 {args.port} 无法监听（{e}）。可能是已有一个阅读器在运行；"
+                 f"换一个端口再试：--port {args.port + 1}")
     url = f"http://127.0.0.1:{args.port}/"
     cur = Handler.app.current_meta()
     print(f"阅读器已启动: {url}")
     print(f"当前文档: {cur.get('file') or '(无)'}  就绪={cur.get('ready')}"
           + ("  [GPU加速]" if args.gpu else ""))
     print("网页右上角可“切换文档”；新文件首次打开会自动建立缓存。")
+    print("关闭本窗口（或按 Ctrl+C）即退出阅读器。")
+    sys.stdout.flush()
+    # 前端渲染库自检：缺失时网页会卡在“加载文档…”，给出明确提示而不是无声失败
+    if not ((PDFJS_DIR / "build" / "pdf.mjs").exists()
+            and (PDFJS_DIR / "build" / "pdf.worker.mjs").exists()):
+        print("\n[警告] 前端渲染库缺失：未找到 node_modules/pdfjs-dist "
+              "（网页会卡在右上角“加载文档…”，无法显示 PDF 内容）。")
+        print("        源码运行请执行:  npm install   然后强刷浏览器（Ctrl+Shift+R）。")
+        print("        打包版请检查 _internal 是否完整（不要只拷 exe）。\n")
+    if args.open_browser:
+        _open_browser(url)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        pass
+        print("\n已退出。")
+    finally:
+        srv.server_close()
 
 
 if __name__ == "__main__":

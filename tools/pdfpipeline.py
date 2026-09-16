@@ -31,9 +31,29 @@ import threading
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+def _data_root() -> Path:
+    """可写数据根：打包版=exe 同级目录，源码运行=项目根目录。
+
+    注意不能用 __file__ 推项目根：PyInstaller 解压目录（sys._MEIPASS）是只读的，
+    缓存/定制配置写到那里会在下次运行丢失。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+ROOT = _data_root()
 CACHE_ROOT = ROOT / "cache"
 SCHEMA_VERSION = 2
+
+
+def set_cache_root(path) -> Path:
+    """切换缓存根（打包版在启动时定位到 exe 同级目录）。须在 build() 之前调用。"""
+    global CACHE_ROOT
+    CACHE_ROOT = Path(path).resolve()
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    return CACHE_ROOT
+
 
 # ---------------------------------------------------------------- 公共工具
 def sha_docid(pdf_path: Path, chunk=1 << 20) -> str:
@@ -50,8 +70,9 @@ def sha_docid(pdf_path: Path, chunk=1 << 20) -> str:
     return h.hexdigest()[:16]
 
 
-def cache_dir_for(pdf_path: Path, root: Path = CACHE_ROOT) -> Path:
-    return root / sha_docid(pdf_path)
+def cache_dir_for(pdf_path: Path, root: Path = None) -> Path:
+    # root 默认值不能写成 `= CACHE_ROOT`：那样会在 import 时固化，set_cache_root 就失效了
+    return (Path(root) if root is not None else CACHE_ROOT) / sha_docid(pdf_path)
 
 
 def _cjk_char(c: str) -> bool:

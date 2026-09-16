@@ -195,25 +195,36 @@ async function boot() {
 /* ================= pdf.js 阅读器 ================= */
 async function loadPdfjs() {
   if (state.pdfjs) return state.pdfjs;
-  const lib = await import("/vendor/pdfjs/build/pdf.mjs");
-  lib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/build/pdf.worker.mjs";
-  state.pdfjs = lib;
-  return lib;
+  try {
+    const lib = await import("/vendor/pdfjs/build/pdf.mjs");
+    lib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/build/pdf.worker.mjs";
+    state.pdfjs = lib;
+    return lib;
+  } catch (e) {
+    const hint = "pdf.js 前端库未正确安装（node_modules/pdfjs-dist 缺失或版本不完整）。";
+    throw new Error(hint + " 请在项目目录执行 npm install 后刷新页面。原始错误: " + e.message);
+  }
 }
 
 async function initViewer() {
   setPill("加载文档…", "busy");
-  const lib = await loadPdfjs();
   try {
+    const lib = await loadPdfjs();
     const task = lib.getDocument({
       url: "/api/pdf",
       disableAutoFetch: false,
       isEvalSupported: false,
+      // pdf.js v5 不再自动推导这些资源目录，显式指向本地 vendored 包
+      cMapUrl: "/vendor/pdfjs/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
+      wasmUrl: "/vendor/pdfjs/wasm/",
     });
     state.pdfDoc = await task.promise;
   } catch (e) {
-    setPill("文档加载失败");
+    setPill("文档加载失败", "");
     $("docInfo").textContent = "PDF 加载失败：" + e.message;
+    dbg("initViewer: " + e.message);
     return;
   }
   pageTotalEl.textContent = String(state.pdfDoc.numPages);

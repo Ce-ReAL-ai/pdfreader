@@ -1,0 +1,18 @@
+# 统一换行符，避免 Windows 的 core.autocrlf=true 把 LF 偷偷换成 CRLF：
+# GitHub Actions 的 YAML 与 Python 脚本一旦被改成 CRLF，在 Linux/WSL 下会出问题。
+* text=auto eol=lf
+
+# 这两个是 Windows 独占的脚本，保持 CRLF 更贴合系统习惯
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# 二进制：不要做任何换行转换
+*.png binary
+*.jpg binary
+*.pdf binary
+*.7z binary
+*.zip binary
+*.onnx binary
+*.dll binary
+*.exe binary

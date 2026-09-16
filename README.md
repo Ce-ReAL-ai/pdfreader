@@ -40,6 +40,9 @@ start_server.cmd --pdf "D:\docs\书.pdf"
 :: 或分开两步（命令行建缓存，再启动服务器）
 .venv\Scripts\python.exe tools\build_cache.py --pdf "D:\docs\书.pdf" --dpi 200
 .venv\Scripts\python.exe tools\serve.py --pdf "D:\docs\书.pdf"
+
+:: 想让程序自己挑书并自动开浏览器（等价于打包版双击）
+.venv\Scripts\python.exe tools\launcher.py
 ```
 
 浏览器打开 <http://127.0.0.1:8765/>：
@@ -49,7 +52,8 @@ start_server.cmd --pdf "D:\docs\书.pdf"
 3. 顶栏 **切换文档** 可打开其它 PDF / 扫描整个文件夹；
 4. 有书签的 PDF，阅读器工具栏会出现 **目录…** 下拉，可直接跳章节。
 
-> 不带 `--pdf` 启动会默认打开上次使用的文档。
+> 不带 `--pdf` 启动会默认打开上次使用的文档。`launcher.py`（以及打包版）会依次尝试
+> 上次文档 → `books/` 里唯一一本 → 控制台编号选书 → 图形化选书框。
 
 ---
 
@@ -145,6 +149,8 @@ cache/<docid=内容sha256前16位>/
 
 ## 八、常见问题（FAQ）
 
+- **网页一直停在右上角“加载文档…/加载文件”**：通常是没执行 `npm install`（缺 `node_modules/pdfjs-dist`）。
+  在项目根目录执行 `npm install` 后 `Ctrl+Shift+R` 强刷；服务器启动时控制台也会打印对应警告。
 - **弹窗一直“准备中 / 空进度条”**：`Ctrl+Shift+R` 强刷。仍异常时看页面顶部黑色诊断条：
   `ready=true` 说明服务器正常，多为旧页面缓存；`ready=false` 说明连的不是该服务器进程
   （端口被另一实例占用等），关掉多余实例只留一个。
@@ -170,7 +176,68 @@ pdfreader/
   start_server.cmd / start_build.cmd   一键脚本
 ```
 
-## 十、技术要点（维护者速记）
+## 十、打包分享（给别人用，无需装 Python）
+
+一条命令产出绿色包：
+
+```bat
+package.cmd              :: 构建 + 组装 dist\PDFReader\
+package.cmd --7z         :: 额外产出 dist\PDFReader-分享包.7z（最小，需 7-Zip）
+package.cmd --release    :: 再额外产出 dist\pdfreader-cache.zip（两个都传 Release）
+package.cmd --all        :: 预置 cache\ 里的全部缓存（不止 4 本大书）
+```
+
+产物结构（解压双击即用，Windows 10/11 64 位，不需 Python / npm / 联网）：
+
+```
+dist/PDFReader/                  解压后 329 MB
+  PDF阅读器.exe      双击：挑书 → 起服务 → 自动开浏览器
+  _internal/         PyInstaller 运行时 + web/ + pdfjs 渲染库（302 MB）
+  cache/             预置的 OCR 缓存（4 本，21.7 MB）
+  books/             让对方把 PDF 放这里
+  使用说明.txt        给非技术用户的说明
+dist/PDFReader-分享包.7z         实际发出去的东西：103 MB（zip 是 143 MB）
+dist/pdfreader-cache.zip         只含预置缓存，供自行构建的人取用：6.6 MB
+```
+
+实测（本机 Python 3.10.11 / Win11）：预置 4 本王道 2027 教材缓存，
+对方把同版本 PDF 丢进 `books/` 双击 exe → 直接 `ready=True`、秒出检索结果，全程无 OCR。
+打包后自动校验方式见 `tools/smoke_release.py`（服务器就绪 / 前端资源 / 缓存命中 / Range 四项）。
+
+### 传到 GitHub 的正确姿势
+
+**仓库只放源码（实测 27 个文件、182 KB），exe 和缓存都走 Release 资产。** 仓库普通文件超过
+100 MB 会被直接拒收；Git LFS 免费额度按存储+带宽计费，143 MB 的包一次下载就吃掉大半。
+Release 单资产上限 2 GB 且走 CDN，这才是二进制该待的地方。
+
+```
+git tag v1.0.0 && git push origin v1.0.0     # 触发 .github/workflows/release.yml 自动构建
+```
+
+CI 只会去 `cache-latest` 那个 Release 里抓预置缓存（runner 上没有你那几本书，不可能现场 OCR）。
+缓存的更新、`fetch_cache.ps1` 的用法、以及为什么不把缓存提交进仓库，见
+[`release/README.md`](release/README.md)。
+
+设计要点：
+
+- **onedir 而不是 onefile**：包内 400+ MB（onnxruntime/opencv/pymupdf），onefile 每次启动
+  都要解压到临时目录，冷启动多等 5~15 秒且极易被杀软误报。
+- **预置缓存是这套方案的关键**：`docid = 文件前 4 MB 的 sha256 前 16 位`，与路径无关。
+  对方只要拿到**同一份** PDF，打开就是毫秒级检索，完全跳过 OCR（否则 372 页要等十几分钟）。
+  书的内容不同（别的版本/重扫）会自动重新建缓存，不会拿错缓存出错误高亮。
+- **可写数据一律落在 exe 同级目录**：`cache/` 由 `serve.set_cache_root()` /
+  `pdfpipeline.set_cache_root()` 在启动时定位（`_MEIPASS` 是只读的，不能往那里写）；
+  程序目录不可写时自动回退到 `%LOCALAPPDATA%\PDFReader\cache`。
+- **默认 CPU 版**：GPU 版要额外塞 `onnxruntime-gpu` + 6 个 CUDA 轮子（多 1.5 GB+），
+  且必须对方也是 NVIDIA 卡，只在确有需要时单独出包。
+- **归档格式用 7z 而不是 zip**：同一份包 zip 143 MB、tar.zst 134 MB、7z(LZMA2) **103 MB**。
+  `make_release.py` 会自动找 7-Zip，找不到就退回 zip 并提示。
+- `.cmd` 脚本保持 **ASCII-only**：中文注释存成 UTF-8 后，在默认 GBK 控制台代码页下会被
+  误解码，残留字节可能把下一行命令吞掉（`chcp 65001` 也救不了，因为 cmd 读文件用初始代码页）。
+
+---
+
+## 十一、技术要点（维护者速记）
 
 - 坐标：OCR 像素坐标 /(dpi/72) → “左上原点/Y向下”点坐标 → 构建时翻转为 PDF 空间
   （`_flip_regions_y`）；前端用 `viewport.convertToViewportRectangle` 叠加高亮。
