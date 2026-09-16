@@ -250,7 +250,9 @@ def find_7z():
 
 
 def make_zip(dist: Path) -> Path:
-    out = dist.parent / f"{dist.name}-分享包.zip"
+    # 资产名必须是 ASCII：GitHub 上传接口的 ?name= 会把非 ASCII 字符吞掉
+    # （实测 "PDFReader-分享包.7z" 上去后变成 "PDFReader-.7z"）
+    out = dist.parent / "PDFReader-win64.zip"
     print(f"正在打包 zip: {out}")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for f in sorted(dist.rglob("*")):
@@ -266,7 +268,7 @@ def make_7z(dist: Path):
         print("[跳过] 没找到 7-Zip（7z.exe），无法产出 7z。")
         print("       安装 7-Zip 后重试，或直接传 zip（体积大 ~28%）。")
         return None
-    out = dist.parent / f"{dist.name}-分享包.7z"
+    out = dist.parent / "PDFReader-win64.7z"
     if out.exists():
         out.unlink()
     print(f"正在打包 7z (LZMA2 -mx=9): {out}")

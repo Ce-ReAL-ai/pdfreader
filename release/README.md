@@ -30,8 +30,8 @@ JSON，deflate 就压得很好），让"只想拿缓存"的人不必拖整包。
 
 ## 两种给别人用的方式
 
-**A. 小白/同学（推荐）**：直接下 Release 里的 `PDFReader-分享包.zip`（或 `.7z`），
-解压双击 `PDF阅读器.exe`。需要 7-Zip / WinRAR 解 `.7z`；`.zip` 资源管理器自带。
+**A. 小白/同学（推荐）**：直接下 Release 里的 `PDFReader-win64.7z`，
+解压双击 `PDF阅读器.exe`。解 `.7z` 需要 7-Zip / WinRAR（`.zip` 资源管理器自带）。
 
 **B. 想自己构建的人**：克隆仓库 → 按 README「快速开始」装依赖 →
 可选地拉取预置缓存：
@@ -46,18 +46,28 @@ python tools\make_release.py --cache-src staging\ocr-cache --archive 7z
 
 ```bat
 :: 1) 本地出包（7z 最小）
-package.cmd --zip                  :: 或手动两步：
+package.cmd --release              :: 或手动两步：
 .venv\Scripts\python.exe -m PyInstaller pdfreader.spec --noconfirm
 .venv\Scripts\python.exe tools\make_release.py --archive 7z --cache-archive
 
 :: 2) 冒烟自检（服务器/前端资源/缓存命中/Range 四项）
 .venv\Scripts\python.exe tools\smoke_release.py --exe "dist\PDFReader\PDF阅读器.exe"
+
+:: 3) 用 API 直接发 Release（不需要 gh CLI，也不需要 git 推送）
+set GITHUB_TOKEN=<你的PAT>
+.venv\Scripts\python.exe tools\publish_release.py --tag v1.0.0 ^
+    --asset "dist\PDFReader-win64.7z" --asset "dist\pdfreader-cache.zip"
 ```
 
-3) 打开仓库 → **Releases → Draft a new release** → 新建 tag（如 `v1.0.0`）→
-   把 `dist\PDFReader-分享包.7z` 和 `dist\pdfreader-cache.zip` 拖进 assets → Publish。
+`publish_release.py` 走 REST API（Python 的 TLS 在本机可用，不受 git 的 schannel 问题影响），
+流式上传、自动跳过或覆盖同名资产（`--replace`），并在上传后校验远端体积与本地一致。
+也可以手动在网页上传：**Releases → Draft a new release** → 新建 tag → 拖入 assets → Publish。
 
-装过 `gh` CLI 的话，`make_release.py` 结束时会把对应命令直接打出来。
+> **资产名必须是 ASCII**：GitHub 上传接口的 `?name=` 会把非 ASCII 字符吞掉，
+> 实测 `PDFReader-分享包.7z` 上传后变成 `PDFReader-.7z`。所以 `make_release.py` 固定产出
+> `PDFReader-win64.7z` / `PDFReader-win64.zip` / `pdfreader-cache.zip`；
+> `publish_release.py` 遇到非 ASCII 资产名会直接报错而不是悄悄传上去。
+> 压缩包**内部**的解压目录仍是 `PDFReader\`。
 
 > 没装 7-Zip 时 `--archive 7z` 会跳过并提示，此时改成 `--archive zip` 即可
 > （体积 143 MB，仍远低于 Release 的 2 GB 上限）。

@@ -182,7 +182,7 @@ pdfreader/
 
 ```bat
 package.cmd              :: 构建 + 组装 dist\PDFReader\
-package.cmd --7z         :: 额外产出 dist\PDFReader-分享包.7z（最小，需 7-Zip）
+package.cmd --7z         :: 额外产出 dist\PDFReader-win64.7z（最小，需 7-Zip）
 package.cmd --release    :: 再额外产出 dist\pdfreader-cache.zip（两个都传 Release）
 package.cmd --all        :: 预置 cache\ 里的全部缓存（不止 4 本大书）
 ```
@@ -196,7 +196,7 @@ dist/PDFReader/                  解压后 329 MB
   cache/             预置的 OCR 缓存（4 本，21.7 MB）
   books/             让对方把 PDF 放这里
   使用说明.txt        给非技术用户的说明
-dist/PDFReader-分享包.7z         实际发出去的东西：103 MB（zip 是 143 MB）
+dist/PDFReader-win64.7z          实际发出去的东西：103 MB（zip 是 143 MB）
 dist/pdfreader-cache.zip         只含预置缓存，供自行构建的人取用：6.6 MB
 ```
 
@@ -210,13 +210,24 @@ dist/pdfreader-cache.zip         只含预置缓存，供自行构建的人取�
 100 MB 会被直接拒收；Git LFS 免费额度按存储+带宽计费，143 MB 的包一次下载就吃掉大半。
 Release 单资产上限 2 GB 且走 CDN，这才是二进制该待的地方。
 
-```
-git tag v1.0.0 && git push origin v1.0.0     # 触发 .github/workflows/release.yml 自动构建
+不想构建的话，直接去 **[Releases 页面](https://github.com/Ce-ReAL-ai/pdfreader/releases)** 下载现成的包。
+
+```bat
+:: 手动发布（推荐，最稳）
+package.cmd --release
+python tools\publish_release.py --tag v1.0.0 --asset "dist\PDFReader-win64.7z"
+
+:: 或者打 tag 让 CI 自动构建
+git tag v1.0.0 && git push origin v1.0.0     # 触发 .github/workflows/release.yml
 ```
 
 CI 只会去 `cache-latest` 那个 Release 里抓预置缓存（runner 上没有你那几本书，不可能现场 OCR）。
 缓存的更新、`fetch_cache.ps1` 的用法、以及为什么不把缓存提交进仓库，见
 [`release/README.md`](release/README.md)。
+
+> 资产名必须是 **ASCII**：GitHub 上传接口的 `?name=` 会把非 ASCII 字符吞掉
+> （实测 `PDFReader-分享包.7z` 上去后变成 `PDFReader-.7z`），所以归档固定叫
+> `PDFReader-win64.7z`。压缩包**内部**的解压目录仍是 `PDFReader\`。
 
 设计要点：
 
